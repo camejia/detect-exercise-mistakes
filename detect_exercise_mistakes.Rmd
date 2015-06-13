@@ -129,8 +129,6 @@ library(randomForest)
 # save(modRf, file = "modRf_0p75.RData")
 load(file = "modRf_0p75.RData")
 modRf
-plot(modRf, main = "Figure 2: Training Parameter Tuning")
-plot(modRf$finalModel, main = "Figure 3: Random Forest Error Rates")
 ```
 
 Figure 2 shows how the bootstrap accuracy varied as the number of randomly selected parameters was varied.  Although not many different values of randomly selected parameters were processed, the train function did find a maximum with 27 randomly selected parameters.
