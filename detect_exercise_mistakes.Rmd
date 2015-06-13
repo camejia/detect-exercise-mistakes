@@ -2,10 +2,10 @@
 title: "Detecting Mistakes in Exercise Execution"
 author: "Christopher A. Mejia"
 output:
-  pdf_document:
+  html_document:
     number_sections: yes
     toc: yes
-  html_document:
+  pdf_document:
     number_sections: yes
     toc: yes
 ---
