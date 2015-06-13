@@ -1,0 +1,168 @@
+---
+title: "Detecting Mistakes in Exercise Execution"
+author: "Christopher A. Mejia"
+output:
+  pdf_document:
+    number_sections: yes
+    toc: yes
+  html_document:
+    number_sections: yes
+    toc: yes
+---
+
+Executive Summary
+=================
+
+This report analyzes the Weight Lifting Exercises (WLE) from the [Human Activity Recognition (HAR)] (http://groupware.les.inf.puc-rio.br/har) project.  Specifically, this analysis uses data from accelerometers to classify whether a subject is performing Unilateral Dumbbell Biceps Curls correctly, or in one of 4 different incorrect manners.  The analysis uses a Random Forest ("rf") model fit, and the predicted accuracy (i.e. out of sample error) for the resulting model exceeds 99%.
+
+Getting and Cleaning Data
+=========================
+
+```{r, cache = TRUE, warning = FALSE}
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",
+              "pml-training.csv", method = "curl")
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",
+              "pml-testing.csv", method = "curl")
+pml.training <- read.csv("pml-training.csv")
+pml.testing <- read.csv("pml-testing.csv")
+dateDownloaded <- date()
+dateDownloaded
+```
+
+Initial views of the data (not included here) show that there are many columns that are entirely NA, so we will remove those columns.
+
+```{r}
+pml.training <- pml.training[, colSums(!is.na(pml.testing)) != 0]
+pml.testing <- pml.testing[, colSums(!is.na(pml.testing)) != 0]
+```
+
+In addition, we will delete columns that, based on their names, we do not expect to impact our classification.
+
+```{r}
+drops <- c("X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2",
+           "cvtd_timestamp", "new_window", "problem_id")
+pml.training <- pml.training[, !(names(pml.training) %in% drops)]
+pml.testing <- pml.testing[, !(names(pml.testing) %in% drops)]
+```
+
+Finally, we check that the resulting data has all complete cases, i.e. no missing data values that need to be filled in.
+
+```{r}
+nrow(pml.training) == sum(complete.cases(pml.training))
+nrow(pml.testing) == sum(complete.cases(pml.testing))
+```
+
+Exploratory Data Analysis
+=========================
+
+The training and testing data sets have `r ncol(pml.testing)` predictor variables.  As an experiment, we will use principal components analysis to determine how many principal components are needed to capture 90% of the variance:
+
+```{r}
+library(caret)
+predictors <- subset(pml.training, select = -c(classe))
+numComp <- preProcess(predictors, method = "pca", thresh = 0.9)$numComp
+numComp
+```
+
+So we see that we could reduce the number of predictors down to `r numComp` and still capture 90% of the variance.  However, I chose to build my models using all `r ncol(pml.testing)` predictors, and will rely on the caret package's model tuning to prevent overfitting.
+
+Exploratory plots are challenging for this data set due to the large number of predictors (features). For an exploratory plot, I chose only to retain features whose names start with the string "total", as those should provide a summary of information in the other features.  In addition, I created an exploratory data for plotting that is only 2.5% of the size of the training set, to prevent overplotting.
+
+```{r}
+library(rindex)
+plotme <- names(pml.training)[strncmp(names(pml.training), "total", 5) == 0]
+plotme <- c(plotme, "classe")
+
+inXplore <- createDataPartition(y = pml.training$classe,
+                                p = 0.01, list = FALSE)
+xplore <- pml.training[inXplore, ];
+xplore <- xplore[, (names(xplore) %in% plotme)]
+
+featurePlot(x = xplore[, 1 : 4],
+            y = xplore$classe,
+            plot = "ellipse",
+            main = "Figure 1: Scatter Plot Matrix",
+            ## Add a key at the top
+            auto.key = list(columns = 5))
+```
+
+From left to right, or bottom to top, the plot labels are `r names(xplore)[1 : 4]`.  The ellipses show some separation for each of the classes A-E, but not much.  This data sets looks like it could be a challenge for Machine Learning!
+
+Pre-Processing
+==============
+
+We will use some of caret's functions to check the quality of our predictors.  Specifically, we will check for near zero-variance predictors, linear dependencies, and correlated predictors:
+
+```{r}
+any(nearZeroVar(predictors, saveMetrics = TRUE)$zeroVar)
+findLinearCombos(predictors)$linearCombos
+
+predCor <- cor(predictors)
+summary(predCor[upper.tri(predCor)])
+```
+
+There are no near zero-variance predictors or linear dependencies.  However, the maximum correlation of `r max(predCor[upper.tri(predCor)])` might be a bit large.  We will proceed for now without removing any possibly correlated predictors, but we may wish to revisit this if we suspect it causes poor results in our final model.
+
+
+Data Splitting
+==============
+
+The createDataPartition command from the caret library was used to create training and testing data sets by splitting the pml.training data along the classe variable, placing 75% of the data in the training data set and 25% in the testing data set.  Note that these are not the same as the pml.training and pml.testing data sets read from the CSV files.  In particular, we are not given the classe values for the pml.testing data set, so we can't use it to evaluate the performance of our modes.  (The pml.testing data set is for the course project submission.)  Thus the new training and testing data sets are derived from the original pml.training data:
+
+```{r}
+set.seed(1234)
+inTrain <- createDataPartition(y = pml.training$classe,
+                               p = 0.75, list = FALSE)
+training <- pml.training[inTrain, ]
+testing <- pml.training[-inTrain, ]
+```
+
+
+Model Fitting
+=============
+
+A Random Forest model was selected for use in this analysis.  The model fit was performed using the caret train function in order to take advantage of caret's automatic tuning capability.  Only the training data set is used in the model fitting; the testing data sets is "set aside" for later use to independently check the accuracy of our model.  Internal to caret's train function, the training data set is further split into hold-out samples and samples for fitting the model, and this process is iterated with resampling.  For this analysis, caret's train function by setting method = "rf" and then using default values for the training control.  (Note that this code was originally developed in a separate script and the fit resulting from the train function was saved to a file.  The Random Forest model fit required over two hours of processing time on my computer.  The code below simply reloads the data, to save time while developing this knitr report.)
+
+```{r}
+library(randomForest)
+# modRf <- train(classe ~ ., data = training, method = "rf")
+# save(modRf, file = "modRf_0p75.RData")
+load(file = "modRf_0p75.RData")
+modRf
+plot(modRf, main = "Figure 2: Training Parameter Tuning")
+plot(modRf$finalModel, main = "Figure 3: Random Forest Error Rates")
+```
+
+Figure 2 shows how the bootstrap accuracy varied as the number of randomly selected parameters was varied.  Although not many different values of randomly selected parameters were processed, the train function did find a maximum with 27 randomly selected parameters.
+
+```{r}
+plot(modRf, main = "Figure 2: Training Parameter Tuning")
+```
+
+Figure 3 shows the error of the Random Forest model as the function of the number of trees in the forest.  For a small number of trees, the error is reduced by increasing the number of trees, however from the plot the error does flatten out and there does not appear to be much benefit to increasing the number of trees beyond approximately 50 trees.
+
+```{r}
+plot(modRf$finalModel, main = "Figure 3: Random Forest Error Rates")
+```
+
+Testing
+=======
+
+Next we will use our model to perform cross-validation, predicting the out-of-sample error on the samples that were set aside earlier as the testing set.
+
+```{r}
+predRf <- predict(modRf, testing)
+accRf <- postResample(predRf, testing$classe)
+accRf
+```
+
+The out-of-sample accuracy (i.e. 1 - out-of-sample error), is `r as.numeric(accRf[1])`, which is very good!  Based on these excellent results, we do not need to worry about correlated predictors nor do we need to exercise finer control over caret's training process.  Finally, we will use the caret package's confusionMatrix() function to compare our predictions to the reference (truth) classes.
+
+```{r}
+confusionMatrix(predRf, testing$classe)
+```
+
+Conclusion
+==========
+
+A Random Forest ("rf") model was fit to data collected from subjects performing Unilateral Dumbbell Biceps Curls, and the model was able to correctly classify with an estimate out-of-sample accuracy of `r as.numeric(accRf[1])` whether the exercise was performed correctly, or whether it was performed incorrectly in one of four possible ways.
