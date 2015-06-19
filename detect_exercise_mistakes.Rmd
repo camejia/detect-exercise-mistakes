@@ -82,7 +82,9 @@ featurePlot(x = xplore[, 1 : 4],
             y = xplore$classe,
             plot = "ellipse",
             main = "Figure 1: Scatter Plot Matrix",
-            ## Add a key at the top
+            # labels do not show; bug in featurePlot?
+            labels = c("belt", "arm", "dumbbell", "forearm"),
+            # Add a key at the top
             auto.key = list(columns = 5))
 ```
 
@@ -160,7 +162,14 @@ The out-of-sample accuracy (i.e. 1 - out-of-sample error), is `r as.numeric(accR
 confusionMatrix(predRf, testing$classe)
 ```
 
+The confusion matrix has few off-diagonal elements that are non-zero, which is consistent with the high accuracy predicted for this model.  The model fit can also be used to predict on the pml.testing data set to prepare for Submission portion of the course project.
+
+```{r}
+predict(modRf, pml.testing)
+```
+
+  
 Conclusion
 ==========
 
-A Random Forest ("rf") model was fit to data collected from subjects performing Unilateral Dumbbell Biceps Curls, and the model was able to correctly classify with an estimate out-of-sample accuracy of `r as.numeric(accRf[1])` whether the exercise was performed correctly, or whether it was performed incorrectly in one of four possible ways.
+A Random Forest ("rf") model was fit to data collected from subjects performing Unilateral Dumbbell Biceps Curls, and the model was able to correctly classify with an estimate out-of-sample accuracy of `r as.numeric(accRf[1])` whether the exercise was performed correctly, or whether it was performed incorrectly in one of four possible ways. 
